@@ -48,14 +48,16 @@ async def hello_world():
     return {"status_code": 200, "mensagem": "Bem Vindo ao InsightIA"}
 
 # Realizar WebScraping no ReclameAqui buscando a empresa selecionada
-@app.get("/scraping/{empresa}")
+@app.post("/scraping/{empresa}")
 async def web_scraping(empresa: str, apelido: str = Query(None, description="Apelido para nome da Empresa"), max_page: int = Query(None, description="Número máximo de páginas para scraping")):
     try:
         empresa = empresa.replace(' ', '-')
         scraper = Scraping(empresa, apelido, max_page)
+        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+        if dados:
+            await apagar_reclamacoes_por_empresa(empresa)
+            
         status, dados = await scraper.iniciar()
-
-        # Verifica o código de status e faz o retorno apropriado
         if status['status_code'] == 200:
             return await save_db(dados)
         else:
@@ -78,10 +80,14 @@ async def consultar_empresa():
         raise HTTPException(status_code=500, detail=f"Erro ao buscar empresas:  {str(e)}")
 
 @app.get("/reclamacoes/{empresa}")
-async def consultar_reclamacoes(empresa: str):
+async def consultar_reclamacoes(empresa: str, max_reclamacao: int = Query(None, description="Número máximo de reclamacoes desejadas")):
     empresa = empresa.replace(' ', '-')
     try:
-        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+        collection_ref = db.collection("reclamacoes").where('empresa', '==', empresa)
+        if max_reclamacao:
+            collection_ref = collection_ref.limit(max_reclamacao)
+        
+        dados = [doc.to_dict() for doc in collection_ref.stream()]
         if not dados:
             raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa informada.")
 
@@ -90,8 +96,41 @@ async def consultar_reclamacoes(empresa: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao consultar dados: {str(e)}")
 
+@app.get("/historico/{empresa}")
+async def historico(empresa: str):
+    try:
+        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+        if not dados:
+            raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa informada.")
+
+        qtd_reclamacoes = len(dados)  
+        response = {
+            "empresa": empresa,
+            "qtd_reclamacoes": qtd_reclamacoes,
+            "data-operacao" : dados[0]["data-operacao"]
+        }
+        return {"status_code": 200, "dados": [response] }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao consultar historico da empresa: {str(e)}")
+
+@app.delete("/reclamacoes/{empresa}")
+async def apagar_reclamacoes_por_empresa(empresa: str):
+    try:
+        docs = db.collection("reclamacoes").where('empresa', '==', empresa).stream()
+        deletados = 0
+        deletados = sum(1 for _ in [doc.reference.delete() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()])
+
+        if deletados == 0:
+            return {"status_code": 404, "mensagem": f"Nenhuma reclamação encontrada para a empresa '{empresa}'."}
+        
+        return {"status_code": 200, "mensagem": f"Todas as reclamações da empresa '{empresa}' foram apagadas com sucesso."}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao deletar os dados: {str(e)}")
+
 @app.delete("/reclamacoes/")
-def apagar_todas_reclamacoes():
+async def apagar_todas_reclamacoes():
     try:
         docs = db.collection("reclamacoes").stream()
         for doc in docs:

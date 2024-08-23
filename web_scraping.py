@@ -8,6 +8,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
 import csv
+from datetime import datetime
 
 class Scraping:
 
@@ -81,6 +82,7 @@ class Scraping:
                 dados.append({
                     "empresa": self.empresa,
                     "apelido": self.apelido,
+                    "data-operacao" : datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "titulo": titulo,
                     "link": f"https://www.reclameaqui.com.br{link}",
                     "descricao": descricao,
