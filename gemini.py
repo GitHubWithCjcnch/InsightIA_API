@@ -15,7 +15,6 @@ Segue textos de reclamacoes.
 
 def configurar_modelo():
     gemini_key = os.getenv('GEMINI_KEY')
-    gemini_key = "AIzaSyCoZBHkcJCnN2VBc5DzeUkMNDc8GKiG8GY"
     if not gemini_key:
         raise ValueError("A chave da API do GEMINI IA não foi encontrada na variável de ambiente 'GEMINI_KEY'.")
     
