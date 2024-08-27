@@ -1,11 +1,10 @@
 import uvicorn
 import pandas as pd
-from fastapi import FastAPI, Query, HTTPException, File, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from web_scraping import Scraping
 from database import iniciar_conexao   
-from regressao import modelo_faturamento, grafico_linha
+from gemini import configurar_modelo, gerar_analise, conversa_gemini
 
 app = FastAPI(
     title="API InsightIA",
@@ -23,15 +22,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db = None
-
 @app.on_event("startup")
 async def startup_event():
     global db
+    global model
+    model = configurar_modelo()
     db = iniciar_conexao()
 
+# Uteis
 async def save_db(dados):
-    global db
     if db is None:
         raise HTTPException(status_code=500, detail="A conexão com o Firestore não foi estabelecida")
     try:
@@ -42,6 +41,15 @@ async def save_db(dados):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao salvar no banco de dados: {str(e)}")
 
+async def buscar_doc_por_empresa_apelido(db, nome):
+    # Primeiro tenta buscar por 'empresa'
+    dados = {doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', nome).stream() if doc.to_dict().get("empresa")}
+
+    # Se não encontrar, tenta buscar por 'apelido'
+    if not dados:
+        dados = {doc.to_dict() for doc in db.collection("reclamacoes").where('apelido', '==', nome).stream() if doc.to_dict().get("apelido")}
+
+    return dados
 
 @app.get("/")
 async def hello_world():
@@ -53,7 +61,7 @@ async def web_scraping(empresa: str, apelido: str = Query(None, description="Ape
     try:
         empresa = empresa.replace(' ', '-')
         scraper = Scraping(empresa, apelido, max_page)
-        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+        dados = buscar_doc_por_empresa_apelido(db, empresa)
         if dados:
             await apagar_reclamacoes_por_empresa(empresa)
             
@@ -66,11 +74,11 @@ async def web_scraping(empresa: str, apelido: str = Query(None, description="Ape
     except Exception as e:
         raise HTTPException(status_code=500, detail="Erro ao realizar web scraping: " +str(e))
 
-# Realizar WebScraping no ReclameAqui buscando a empresa selecionada
+# Buscar as empresas cadastradas
 @app.get("/empresas/")
 async def consultar_empresa():
     try:
-        dados = {doc.to_dict().get("empresa") for doc in db.collection("reclamacoes").stream()}
+        dados = {doc.to_dict().get("empresa") for doc in db.collection("reclamacoes").stream() if doc.to_dict().get("empresa")}
         if not dados:
             raise HTTPException(status_code=404, detail=f"Nenhuma empresa com reclamações encontrada.")
         
@@ -78,6 +86,26 @@ async def consultar_empresa():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao buscar empresas:  {str(e)}")
+    
+@app.get("/empresas/{empresa}")
+async def historico(empresa: str):
+    try:
+        dados = buscar_doc_por_empresa_apelido(db, empresa)
+        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+        
+        if not dados:
+            raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa informada.")
+
+        qtd_reclamacoes = len(dados)  
+        response = {
+            "empresa": empresa,
+            "qtd_reclamacoes": qtd_reclamacoes,
+            "data-operacao" : dados[0]["data-operacao"]
+        }
+        return {"status_code": 200, "dados": [response] }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao consultar historico da empresa: {str(e)}")
 
 @app.get("/reclamacoes/{empresa}")
 async def consultar_reclamacoes(empresa: str, max_reclamacao: int = Query(None, description="Número máximo de reclamacoes desejadas")):
@@ -96,28 +124,10 @@ async def consultar_reclamacoes(empresa: str, max_reclamacao: int = Query(None, 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao consultar dados: {str(e)}")
 
-@app.get("/historico/{empresa}")
-async def historico(empresa: str):
-    try:
-        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
-        if not dados:
-            raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa informada.")
-
-        qtd_reclamacoes = len(dados)  
-        response = {
-            "empresa": empresa,
-            "qtd_reclamacoes": qtd_reclamacoes,
-            "data-operacao" : dados[0]["data-operacao"]
-        }
-        return {"status_code": 200, "dados": [response] }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao consultar historico da empresa: {str(e)}")
 
 @app.delete("/reclamacoes/{empresa}")
 async def apagar_reclamacoes_por_empresa(empresa: str):
     try:
-        docs = db.collection("reclamacoes").where('empresa', '==', empresa).stream()
         deletados = 0
         deletados = sum(1 for _ in [doc.reference.delete() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()])
 
@@ -141,6 +151,22 @@ async def apagar_todas_reclamacoes():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao deletear os dados: {str(e)}")
 
+@app.post("/gemini/{empresa}")
+async def analise_gemini(empresa : str):
+    dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+    try:
+        return {"status_code": 200, "mensagem": f"{gerar_analise(model, dados)}"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro inesperado: {str(e)}")
+    
+@app.get("/gemini/{prompt}")
+async def msg_gemini(prompt : str):
+    try:
+        return {"status_code": 200, "mensagem": f"{conversa_gemini(model, prompt)}"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro inesperado: {str(e)}")
 
 
 if __name__ == "__main__":
