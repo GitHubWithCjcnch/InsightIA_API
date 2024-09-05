@@ -15,6 +15,7 @@ Segue textos de reclamacoes.
 
 def configurar_modelo():
     gemini_key = os.getenv('GEMINI_KEY')
+    gemini_key = 'AIzaSyCoZBHkcJCnN2VBc5DzeUkMNDc8GKiG8GY'
     if not gemini_key:
         raise ValueError("A chave da API do GEMINI IA não foi encontrada na variável de ambiente 'GEMINI_KEY'.")
     
@@ -46,3 +47,14 @@ def gerar_analise(model, dados):
     dados_clean = json.dumps(dados, indent=2)
     parts = [{"text": prompt}, {"text": dados_clean}]
     return interacao_gemini(model, parts, temperature=0.2)
+
+def gerar_analise_complexa(model, dados):
+    dados_clean = json.dumps(dados, indent=2)
+    details = {}
+    chat = model.start_chat(history=[])
+    chat.history.append({"role": "user", "parts": [{"text": prompt}, {"text": dados_clean}] })
+    response = chat.send_message("Faça sugestões de melhoria.")
+    details['sugestao'] = response.text
+    response = chat.send_message("Possiveis causas e soluções.")
+    details['causas'] = response.text
+    return details

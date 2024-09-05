@@ -4,7 +4,8 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from web_scraping import Scraping
 from database import iniciar_conexao   
-from gemini import configurar_modelo, gerar_analise, conversa_gemini
+from gemini import configurar_modelo, gerar_analise, gerar_analise_complexa, conversa_gemini
+from collections import defaultdict
 
 app = FastAPI(
     title="API InsightIA",
@@ -87,23 +88,30 @@ async def consultar_empresa():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao buscar empresas:  {str(e)}")
     
-@app.get("/empresas/{empresa}")
-async def historico(empresa: str):
+@app.get("/historico/")
+async def historico():
     try:
-        dados = buscar_doc_por_empresa_apelido(db, empresa)
-        dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
-        
+        dados = [doc.to_dict() for doc in db.collection("reclamacoes").stream()]
         if not dados:
-            raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa informada.")
+            raise HTTPException(status_code=404, detail="Nenhuma reclamação encontrada.")
 
-        qtd_reclamacoes = len(dados)  
-        response = {
-            "empresa": empresa,
-            "qtd_reclamacoes": qtd_reclamacoes,
-            "data-operacao" : dados[0]["data-operacao"]
-        }
-        return {"status_code": 200, "dados": [response] }
+        responseData = defaultdict(lambda: {
+            "empresa": "",
+            "qtd_reclamacoes": 0,
+            "data-operacao": ""
+        }) 
 
+        for dado in dados:
+            empresa = dado.get("empresa")
+            if empresa:
+                responseData[empresa]["empresa"] = empresa
+                responseData[empresa]["qtd_reclamacoes"] += 1
+                responseData[empresa]["data-operacao"] = dado.get("data-operacao")
+
+        response = list(responseData.values())
+
+        return {"status_code": 200, "dados": response}
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao consultar historico da empresa: {str(e)}")
 
@@ -156,6 +164,15 @@ async def analise_gemini(empresa : str):
     dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
     try:
         return {"status_code": 200, "mensagem": f"{gerar_analise(model, dados)}"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro inesperado: {str(e)}")
+
+@app.post("/gemini/complexa/{empresa}")
+async def analise_gemini_complexa(empresa : str):
+    dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
+    try:
+        return {"status_code": 200, "mensagem": f"{gerar_analise_complexa(model, dados)}"}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro inesperado: {str(e)}")
