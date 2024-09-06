@@ -62,7 +62,8 @@ class Scraping:
             total_pages = int(total_pages_text.split('de')[-1].strip())
             return total_pages
         except Exception as e:
-            return {"status_code": 500, "mensagem": f"Não foi possível obter o número total de páginas: {e}"}
+            print(f"Não foi possível obter o número total de páginas: {e}")
+            return 1
 
     async def scraping(self, total_pages):
         page_number = 1

@@ -53,8 +53,8 @@ def gerar_analise_complexa(model, dados):
     details = {}
     chat = model.start_chat(history=[])
     chat.history.append({"role": "user", "parts": [{"text": prompt}, {"text": dados_clean}] })
-    response = chat.send_message("Faça sugestões de melhoria.")
+    response = chat.send_message("Faça sugestões de melhoria. (Seu retorno sera mostrado em uma tela, entao seja agradavel para usuario e nao confunda)")
     details['sugestao'] = response.text
-    response = chat.send_message("Possiveis causas e soluções.")
+    response = chat.send_message("Possiveis causas e soluções. (Seu retorno sera mostrado em uma tela, entao seja agradavel para usuario e nao confunda)")
     details['causas'] = response.text
     return details

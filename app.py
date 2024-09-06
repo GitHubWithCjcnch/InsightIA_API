@@ -62,7 +62,7 @@ async def web_scraping(empresa: str, apelido: str = Query(None, description="Ape
     try:
         empresa = empresa.replace(' ', '-')
         scraper = Scraping(empresa, apelido, max_page)
-        dados = buscar_doc_por_empresa_apelido(db, empresa)
+        dados = await buscar_doc_por_empresa_apelido(db, empresa)
         if dados:
             await apagar_reclamacoes_por_empresa(empresa)
             
@@ -97,6 +97,7 @@ async def historico():
 
         responseData = defaultdict(lambda: {
             "empresa": "",
+            "apelido": "",
             "qtd_reclamacoes": 0,
             "data-operacao": ""
         }) 
@@ -105,6 +106,7 @@ async def historico():
             empresa = dado.get("empresa")
             if empresa:
                 responseData[empresa]["empresa"] = empresa
+                responseData[empresa]["apelido"] = dado.get("apelido")
                 responseData[empresa]["qtd_reclamacoes"] += 1
                 responseData[empresa]["data-operacao"] = dado.get("data-operacao")
 
@@ -172,7 +174,7 @@ async def analise_gemini(empresa : str):
 async def analise_gemini_complexa(empresa : str):
     dados = [doc.to_dict() for doc in db.collection("reclamacoes").where('empresa', '==', empresa).stream()]
     try:
-        return {"status_code": 200, "mensagem": f"{gerar_analise_complexa(model, dados)}"}
+        return {"status_code": 200, "mensagem": gerar_analise_complexa(model, dados)}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro inesperado: {str(e)}")
@@ -180,7 +182,7 @@ async def analise_gemini_complexa(empresa : str):
 @app.get("/gemini/{prompt}")
 async def msg_gemini(prompt : str):
     try:
-        return {"status_code": 200, "mensagem": f"{conversa_gemini(model, prompt)}"}
+        return {"status_code": 200, "mensagem": conversa_gemini(model, prompt)}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro inesperado: {str(e)}")
