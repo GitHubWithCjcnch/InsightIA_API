@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Query, HTTPException, File, UploadFile, APIRouter
+import re
 from .web_scraping import Scraping
 from app.database.connection import get_db
+from fastapi import FastAPI, Query, HTTPException, File, UploadFile, APIRouter
 
 router = APIRouter()
 
-
-def process_scraping_results(raw_dados):
+def process_scraping_results(raw_dados, max_pages):
+    ramo_empresa = raw_dados['ramo']
     total_reclamacoes = raw_dados['total_reclamacoes']
     categorias = raw_dados['dados']
 
@@ -18,56 +19,46 @@ def process_scraping_results(raw_dados):
 
     categorias_sorted = sorted(categorias, key=lambda x: x['quantidade'], reverse=True)
 
-    top_categorias = categorias_sorted[:6]
-
     dados = {
-        'total_reclamacoes': total_reclamacoes,
-        'dados': top_categorias
+        "ramo": ramo_empresa,
+        "total_reclamacoes": total_reclamacoes,
+        "categorias": categorias_sorted,
+        "max_pages": max_pages
     }
 
     return dados
+
+def sanitize_firestore_field_name(name):
+    return re.sub(r"[^a-zA-Z0-9]", "_", name)
 
 async def save_db(dados, uuid, empresa, max_pages):
     db = get_db()
     if db is None:
         raise HTTPException(status_code=500, detail="A conexão com o Firestore não foi estabelecida")
-    
+
+    sanitized_empresa = sanitize_firestore_field_name(empresa)
+
     try:
-        user_document = db.collection("dadosUsuarios").document(uuid)
-        doc = user_document.get()
+        scrapping_document = db.collection("dadosWebScrapping").document(uuid)
+        doc = scrapping_document.get()
         
         if doc.exists:
-            user_data = doc.to_dict()
-            historico = user_data.get("historico", [])
+            scrapping_data = doc.to_dict()
             
-            empresa_exists = False
-            for entry in historico:
-                if empresa in entry:
-                    empresa_exists = True
-                    existing_max_pages = entry[empresa].get("max_pages", 0)
-                    
-                    if max_pages > existing_max_pages:
-                        entry[empresa] = {"dados": dados, "max_pages": max_pages}
-                        user_document.update({"historico": historico})
-                        return {"status_code": 200, "mensagem": "Dados atualizados com sucesso", "dados": dados}
-                    else:
-                        return {"status_code": 200, "mensagem": "Número de páginas não é maior que o atual. Dados não atualizados."}
-                    break
-            
-            if not empresa_exists:
-                historico.append({
-                    empresa: {"dados": dados, "max_pages": max_pages}
-                })
-                user_document.update({"historico": historico})
+            if sanitized_empresa in scrapping_data:
+                existing_data = scrapping_data[sanitized_empresa]
+                existing_max_pages = existing_data.get("max_pages", 0)
+                
+                if max_pages > existing_max_pages:
+                    scrapping_document.update({sanitized_empresa: dados})
+                    return {"status_code": 200, "mensagem": "Dados atualizados com sucesso", "dados": dados}
+                else:
+                    return {"status_code": 200, "mensagem": "Número de páginas não é maior que o atual. Dados não atualizados."}
+            else:
+                scrapping_document.update({sanitized_empresa: dados})
                 return {"status_code": 200, "mensagem": "Dados coletados e salvos com sucesso", "dados": dados}
         else:
-            user_document.set({
-                "historico": [
-                    {
-                        empresa: {"dados": dados, "max_pages": max_pages}
-                    }
-                ]
-            })
+            scrapping_document.set({sanitized_empresa: dados})
             return {"status_code": 200, "mensagem": "Documento criado e dados salvos com sucesso", "dados": dados}
 
     except Exception as e:
@@ -82,7 +73,7 @@ async def web_scraping(uuid: str, empresa: str, apelido: str = Query(None, descr
         status, raw_dados = await scraper.iniciar()
 
         if status['status_code'] == 200:
-            dados = process_scraping_results(raw_dados)
+            dados = process_scraping_results(raw_dados, max_page)
             return await save_db(dados, uuid, empresa, max_page)
         else:
             raise HTTPException(status_code=status['status_code'], detail=f"{status['mensagem']}")
@@ -117,8 +108,8 @@ async def consultar_reclamacoes(empresa: str, uuid: str):
 
         user_data = doc.to_dict()
         
-        historico = user_data.get("historico", [])
-        empresa_dados = next((item for item in historico if empresa in item), None)
+        web_scrapping_dados = user_data.get("web_scrapping_dados", [])
+        empresa_dados = next((item for item in web_scrapping_dados if empresa in item), None)
         
         if empresa_dados is None:
             raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa {empresa}.")
@@ -148,14 +139,14 @@ async def apagar_reclamacoes_empresa(empresa: str, uuid: str):
 
         user_data = doc.to_dict()
         
-        historico = user_data.get("historico", [])
-        novo_historico = [item for item in historico if empresa not in item]
+        web_scrapping_dados = user_data.get("web_scrapping_dados", [])
+        novo_web_scrapping_dados = [item for item in web_scrapping_dados if empresa not in item]
         
-        if len(novo_historico) == len(historico):
+        if len(novo_web_scrapping_dados) == len(web_scrapping_dados):
             raise HTTPException(status_code=404, detail=f"Nenhuma reclamação encontrada para a empresa {empresa} no histórico do usuário.")
 
         user_document.update({
-            "historico": novo_historico
+            "web_scrapping_dados": novo_web_scrapping_dados
         })
         
         return {"status_code": 200, "mensagem": f"Reclamações para a empresa {empresa} foram apagadas com sucesso."}

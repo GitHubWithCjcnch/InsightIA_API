@@ -8,7 +8,6 @@ def iniciar_conexao():
     firebase_credentials = os.environ.get("FIREBASE_CREDENTIALS")
     if firebase_credentials is None:
         raise HTTPException(status_code=500, detail="Não foi possível se conectar ao firebase.")
-
     try:
         chave_acesso = json.loads(firebase_credentials)
     except json.JSONDecodeError as e:
