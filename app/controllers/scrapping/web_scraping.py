@@ -1,7 +1,6 @@
 import re
 import csv
 import asyncio
-import pandas as pd
 from time import sleep
 from bs4 import BeautifulSoup
 from selenium import webdriver

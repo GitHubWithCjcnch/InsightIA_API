@@ -1,5 +1,4 @@
 import uvicorn
-import pandas as pd
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException, File, UploadFile
 from fastapi.responses import JSONResponse
